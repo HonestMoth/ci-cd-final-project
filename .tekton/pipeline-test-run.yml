@@ -1,0 +1,19 @@
+
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: ci-cd-test-run-
+spec:
+  pipelineRef:
+    name: ci-cd-test-pipeline
+
+  params:
+    - name: repo-url
+      value: https://github.com/HonestMoth/ci-cd-final-project.git
+    - name: branch
+      value: main
+
+  workspaces:
+    - name: output
+      persistentVolumeClaim:
+        claimName: oc-lab-pvc
