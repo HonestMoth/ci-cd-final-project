@@ -1,0 +1,122 @@
+
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: ci-cd-build-test
+spec:
+  params:
+    - name: repo-url
+      type: string
+    - name: branch
+      type: string
+      default: main
+    - name: build-image
+      type: string
+
+  workspaces:
+    - name: output
+
+  tasks:
+    - name: cleanup
+      taskRef:
+        name: cleanup
+      workspaces:
+        - name: source
+          workspace: output
+
+    - name: git-clone
+      taskRef:
+        name: git-clone
+      runAfter:
+        - cleanup
+      params:
+        - name: url
+          value: $(params.repo-url)
+        - name: revision
+          value: $(params.branch)
+        - name: deleteExisting
+          value: "false"
+      workspaces:
+        - name: output
+          workspace: output
+
+    - name: lint
+      taskRef:
+        name: flake8
+      runAfter:
+        - git-clone
+      workspaces:
+        - name: source
+          workspace: output
+
+    - name: tests
+      taskRef:
+        name: nose
+      runAfter:
+        - lint
+      params:
+        - name: args
+          value: "-v"
+      workspaces:
+        - name: source
+          workspace: output
+
+    - name: build
+      taskRef:
+        name: buildah
+        kind: ClusterTask
+      runAfter:
+        - tests
+      params:
+        - name: IMAGE
+          value: $(params.build-image)
+        - name: DOCKERFILE
+          value: ./Dockerfile
+        - name: CONTEXT
+          value: .
+      workspaces:
+        - name: source
+          workspace: output
+
+    - name: deploy
+      taskRef:
+        name: openshift-client
+        kind: ClusterTask
+      runAfter:
+        - build
+      params:
+        - name: SCRIPT
+          value: |
+            oc apply -f - <<EOF
+            apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: ci-cd-final-project
+            spec:
+              replicas: 1
+              selector:
+                matchLabels:
+                  app: ci-cd-final-project
+              template:
+                metadata:
+                  labels:
+                    app: ci-cd-final-project
+                spec:
+                  containers:
+                    - name: ci-cd-final-project
+                      image: $(params.build-image)
+                      ports:
+                        - containerPort: 8000
+            ---
+            apiVersion: v1
+            kind: Service
+            metadata:
+              name: ci-cd-final-project
+            spec:
+              selector:
+                app: ci-cd-final-project
+              ports:
+                - port: 8000
+                  targetPort: 8000
+            EOF
+            oc rollout status deployment/ci-cd-final-project --timeout=180s
